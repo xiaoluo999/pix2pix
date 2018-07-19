@@ -12,6 +12,7 @@ import random
 import collections
 import math
 import time
+import cv2
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--input_dir", help="path to folder containing images")
@@ -30,7 +31,7 @@ parser.add_argument("--save_freq", type=int, default=5000, help="save model ever
 
 parser.add_argument("--aspect_ratio", type=float, default=1.0, help="aspect ratio of output images (width/height)")
 parser.add_argument("--lab_colorization", action="store_true", help="split input image into brightness (A) and color (B)")
-parser.add_argument("--batch_size", type=int, default=1, help="number of images in batch")
+parser.add_argument("--batch_size", type=int, default=2, help="number of images in batch")
 parser.add_argument("--which_direction", type=str, default="AtoB", choices=["AtoB", "BtoA"])
 parser.add_argument("--ngf", type=int, default=64, help="number of generator filters in first conv layer")
 parser.add_argument("--ndf", type=int, default=64, help="number of discriminator filters in first conv layer")
@@ -49,7 +50,7 @@ a = parser.parse_args()
 
 EPS = 1e-12
 CROP_SIZE = 256
-
+#命名元组
 Examples = collections.namedtuple("Examples", "paths, inputs, targets, count, steps_per_epoch")
 Model = collections.namedtuple("Model", "outputs, predict_real, predict_fake, discrim_loss, discrim_grads_and_vars, gen_loss_GAN, gen_loss_L1, gen_grads_and_vars, train")
 
@@ -240,7 +241,7 @@ def load_examples():
         raise Exception("input_dir does not exist")
 
     input_paths = glob.glob(os.path.join(a.input_dir, "*.jpg"))
-    decode = tf.image.decode_jpeg
+    #decode = tf.image.decode_jpeg
     if len(input_paths) == 0:
         input_paths = glob.glob(os.path.join(a.input_dir, "*.png"))
         decode = tf.image.decode_png
@@ -259,12 +260,21 @@ def load_examples():
     else:
         input_paths = sorted(input_paths)
 
-    # load images
+    # 直接读取批量图像
     with tf.name_scope("load_images"):
+        #1.生成图像文件路径队列
         path_queue = tf.train.string_input_producer(input_paths, shuffle=a.mode == "train")
+        #2.初始化reader对象
         reader = tf.WholeFileReader()
+        #3.读取图像的一个图像文件路径和对应的原始内容,
         paths, contents = reader.read(path_queue)
-        raw_input = decode(contents)
+        #4.读取图像像素数据，raw_input:[256,256,3]
+        raw_input = tf.image.decode_jpeg(contents)
+        # with  tf.Session() as sess:
+        #     coord = tf.train.Coordinator()
+        #     threads = tf.train.start_queue_runners(coord=coord)
+        #     temp = sess.run(raw_input)
+        #5.图像归一化为[0,1]
         raw_input = tf.image.convert_image_dtype(raw_input, dtype=tf.float32)#[0,1]
 
         assertion = tf.assert_equal(tf.shape(raw_input)[2], 3, message="image does not have 3 channels")
@@ -317,10 +327,27 @@ def load_examples():
 
     with tf.name_scope("target_images"):
         target_images = transform(targets)
+    #批量读取图像数据
+    #inputs_batch:[batch_size,heihgt,width,channels]
 
     paths_batch, inputs_batch, targets_batch = tf.train.batch([paths, input_images, target_images], batch_size=a.batch_size)
     steps_per_epoch = int(math.ceil(len(input_paths) / a.batch_size))
+    with  tf.Session() as sess:
+        coord = tf.train.Coordinator()
+        threads = tf.train.start_queue_runners(coord=coord)
+        temp = sess.run(input_images)
+        temp1 = sess.run(paths)
+        temp2 = sess.run(target_images)
+        temp3 = sess.run(paths_batch)
+        temp4 = sess.run(inputs_batch)
+        temp5 = sess.run(targets_batch)
+        temp6 = sess.run(a_images)
+        temp7 = sess.run(b_images)
+        bgr2rgb(temp6)
+        bgr2rgb(temp7)
 
+        cv2.imwrite("input.bmp",(temp6+1)/2*255)
+        cv2.imwrite("target.bmp",(temp7+1)/2*255)
     return Examples(
         paths=paths_batch,
         inputs=inputs_batch,
@@ -328,8 +355,12 @@ def load_examples():
         count=len(input_paths),
         steps_per_epoch=steps_per_epoch,
     )
-
-#生成器
+#opencv存储数据为gbr，如果想用CV2保存图像，会用到该函数
+def bgr2rgb(image):
+    for j in range(image.shape[0]):#图像高
+        for i in range(image.shape[1]):#图像宽
+            image[j][i][0],image[j][i][2] = image[j][i][2],image[j][i][0]
+#生成器,Unet模型，输出为[batch_size,256,256,3],
 def create_generator(generator_inputs, generator_outputs_channels):
     layers = []
 
@@ -403,7 +434,14 @@ def create_model(inputs, targets):
     def create_discriminator(discrim_inputs, discrim_targets):
         n_layers = 3
         layers = []
-
+        sess  = tf.Session()
+        # coord = tf.train.Coordinator()
+        # thread = tf.train.start_queue_runners(coord=coord)
+        # [temp,temp1] = sess.run([discrim_inputs,discrim_targets])
+        # bgr2rgb(temp)
+        # bgr2rgb(temp1)
+        # cv2.imwrite("discrim_inputs.bmp",temp)
+        # cv2.imwrite("discrim_targets.bmp",temp1)
         # 2x [batch, height, width, in_channels] => [batch, height, width, in_channels * 2]
         input = tf.concat([discrim_inputs, discrim_targets], axis=3)
 
@@ -546,8 +584,8 @@ def main():
 #     if tf.__version__.split('.')[0] != "1":
 #         raise Exception("Tensorflow version 1 required")
 
-      # 训练的时候的参数(由于采用
-    a.input_dir = "./train"
+      # 训练的时候的参数
+    a.input_dir = "./image"
     a.mode = "train"
     a.output_dir = "./ckt"
     a.max_epochs=200
