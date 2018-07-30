@@ -31,7 +31,7 @@ parser.add_argument("--save_freq", type=int, default=5000, help="save model ever
 
 parser.add_argument("--aspect_ratio", type=float, default=1.0, help="aspect ratio of output images (width/height)")
 parser.add_argument("--lab_colorization", action="store_true", help="split input image into brightness (A) and color (B)")
-parser.add_argument("--batch_size", type=int, default=2, help="number of images in batch")
+parser.add_argument("--batch_size", type=int, default=1, help="number of images in batch")
 parser.add_argument("--which_direction", type=str, default="AtoB", choices=["AtoB", "BtoA"])
 parser.add_argument("--ngf", type=int, default=64, help="number of generator filters in first conv layer")
 parser.add_argument("--ndf", type=int, default=64, help="number of discriminator filters in first conv layer")
@@ -293,13 +293,13 @@ def load_examples():
             # break apart image pair and move to range [-1, 1]
             width = tf.shape(raw_input)[1] # [height, width, channels]
             # [0, 1] => [-1, 1]
-            a_images = preprocess(raw_input[:,:width//2,:])
-            b_images = preprocess(raw_input[:,width//2:,:])
+            a_images = preprocess(raw_input[:,:width//2,:])#图像左半部分
+            b_images = preprocess(raw_input[:,width//2:,:])#图像右半部分
 
     if a.which_direction == "AtoB":
         inputs, targets = [a_images, b_images]
     elif a.which_direction == "BtoA":
-        inputs, targets = [b_images, a_images]
+        inputs, targets = [b_images, a_images]#inputs=b_imags,targets = a_images
     else:
         raise Exception("invalid direction")
 
@@ -308,6 +308,7 @@ def load_examples():
     seed = random.randint(0, 2**31 - 1)
     def transform(image):
         r = image
+        #左右翻转
         if a.flip:
             r = tf.image.random_flip_left_right(r, seed=seed)
 
@@ -316,6 +317,7 @@ def load_examples():
         r = tf.image.resize_images(r, [a.scale_size, a.scale_size], method=tf.image.ResizeMethod.AREA)
 
         offset = tf.cast(tf.floor(tf.random_uniform([2], 0, a.scale_size - CROP_SIZE + 1, seed=seed)), dtype=tf.int32)
+        #图像大于256则裁剪为256大小
         if a.scale_size > CROP_SIZE:
             r = tf.image.crop_to_bounding_box(r, offset[0], offset[1], CROP_SIZE, CROP_SIZE)#图像裁剪
         elif a.scale_size < CROP_SIZE:
@@ -341,8 +343,12 @@ def load_examples():
         temp3 = sess.run(paths_batch)
         temp4 = sess.run(inputs_batch)
         temp5 = sess.run(targets_batch)
-        temp6 = sess.run(a_images)
-        temp7 = sess.run(b_images)
+        bgr2rgb(temp4[0])
+        bgr2rgb(temp5[0])
+        cv2.imwrite("input_batch.bmp",(temp4[0]+1)/2*255)
+        cv2.imwrite("targets_batch.bmp",(temp5[0]+1)/2*255)
+        temp6,temp7,temp8,temp9 = sess.run([a_images,b_images,inputs,targets])
+        #temp7 = sess.run(b_images)
         bgr2rgb(temp6)
         bgr2rgb(temp7)
 
