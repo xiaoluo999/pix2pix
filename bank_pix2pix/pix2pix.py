@@ -20,6 +20,8 @@ import collections
 import math
 import time
 import sys
+import utils_file
+import utils_image
 
 import cv2
 
@@ -37,12 +39,12 @@ parser.add_argument("--checkpoint",  help="")
 #最大训练步数
 parser.add_argument("--max_steps", type=int, help="number of training steps (0 to disable)")
 parser.add_argument("--max_epochs", type=int, help="number of training epochs")
-parser.add_argument("--summary_freq", type=int, default=5, help="update summaries every summary_freq steps")
+parser.add_argument("--summary_freq", type=int, default=500, help="update summaries every summary_freq steps")
 #多少步打印一次loss
 parser.add_argument("--progress_freq", type=int, default=50, help="display progress every progress_freq steps")
 parser.add_argument("--trace_freq", type=int, default=0, help="trace execution every trace_freq steps")
 parser.add_argument("--display_freq", type=int, default=0, help="")
-parser.add_argument("--save_freq", type=int, default=5, help="save model every save_freq steps, 0 to disable")
+parser.add_argument("--save_freq", type=int, default=500, help="save model every save_freq steps, 0 to disable")
 parser.add_argument("--start_global_step", type=int, default=0, help="restore or net")
 
 parser.add_argument("--separable_conv", action="store_true", help="use separable convolutions in the generator")
@@ -59,8 +61,8 @@ parser.add_argument("--no_flip", dest="flip", action="store_false", help="don't 
 parser.set_defaults(flip=True)
 parser.add_argument("--lr", type=float, default=0.0002, help="initial learning rate for adam")
 parser.add_argument("--beta1", type=float, default=0.5, help="momentum term of adam")
-parser.add_argument("--l1_weight", type=float, default=100.0, help="weight on L1 term for generator gradient")
-parser.add_argument("--gan_weight", type=float, default=1.0, help="weight on GAN term for generator gradient")
+parser.add_argument("--l1_weight", type=float, default=1.0, help="weight on L1 term for generator gradient")
+parser.add_argument("--gan_weight", type=float, default=0.0, help="weight on GAN term for generator gradient")
 
 # export options
 parser.add_argument("--output_filetype", default="png", choices=["png", "jpeg"])
@@ -295,8 +297,8 @@ def load_examples1():
     with tf.name_scope("load_images"):
         path_queue = tf.train.string_input_producer(input_paths, shuffle=a.mode == "train")
         reader = tf.WholeFileReader()
-        paths, contents = reader.read(path_queue)
-        raw_input = decode(contents)
+        paths, contents = reader.read(path_queue)#paths='merge_image\\612_250.jpg"
+        raw_input = decode(contents)#raw_input.shape=(256,1024,1)
         raw_input = tf.image.convert_image_dtype(raw_input, dtype=tf.float32)
 
         assertion = tf.assert_equal(tf.shape(raw_input)[2], 3, message="image does not have 3 channels")
@@ -392,7 +394,7 @@ def load_examples():
         reader = tf.WholeFileReader()  #一个阅读器，读取整个文件，返回文件名称key,以及文件中所有的内容value
         paths, contents = reader.read(path_queue)
         raw_input = decode(contents, 1)
-        raw_input = tf.image.convert_image_dtype(raw_input, dtype=tf.float32)
+        raw_input = tf.image.convert_image_dtype(raw_input, dtype=tf.float32)#图像归一化到[0,1]
         
 
         # here we horizontally expand the chanel, first three block is original image, others are mask
@@ -450,7 +452,7 @@ def load_examples():
 
     with tf.name_scope("target_images"):
         target_images = transform(targets)
-
+    #[inut_images]=[256,256,3],inuts_batch[1,256,256,3]
     paths_batch, inputs_batch, targets_batch = tf.train.batch([paths, input_images, target_images],
                                                               batch_size=a.batch_size)
     steps_per_epoch = int(math.ceil(len(input_paths) / a.batch_size)) #向上取整
@@ -459,10 +461,10 @@ def load_examples():
     #     coord = tf.train.Coordinator()
     #     threads = tf.train.start_queue_runners(coord=coord)
     #     for i in range(100):
-    #         # temp = sess.run(input_images)
-    #         # temp1 = sess.run(paths)
-    #         # temp2 = sess.run(target_images)
-    #         temp3 = sess.run(chanel)
+    #         temp = sess.run(raw_input)
+    #         temp1 = sess.run(paths)
+    #         temp2 = sess.run(input_images)
+    #         temp3 = sess.run(paths_batch)
     #         temp4 = sess.run(inputs_batch)
     #         temp5 = sess.run(targets_batch)
     #         # bgr2rgb(temp4[0])
@@ -528,7 +530,7 @@ def create_generator(generator_inputs, generator_outputs_channels):
         (a.ngf, 0.0),  # decoder_2: [batch, 64, 64, ngf * 2 * 2] => [batch, 128, 128, ngf * 2]
     ]
 
-    num_encoder_layers = len(layers)
+    num_encoder_layers = len(layers)#len(layers)=8
     for decoder_layer, (out_channels, dropout) in enumerate(layer_specs):
         skip_layer = num_encoder_layers - decoder_layer - 1
         with tf.variable_scope("decoder_%d" % (skip_layer + 1)):
@@ -612,13 +614,13 @@ def create_model(inputs, targets):
             predict_fake = create_discriminator(inputs, outputs)
 
     with tf.name_scope("discriminator_loss"):
-        # minimizing -tf.log will try to get inputs to 1
+        # minimizing -tf.log will try to get inputs to 1，判别器用来判别真假，认为真正的输入输出对为1，生成的对为0,
         # predict_real => 1
         # predict_fake => 0
         discrim_loss = tf.reduce_mean(-(tf.log(predict_real + EPS) + tf.log(1 - predict_fake + EPS)))
 
     with tf.name_scope("generator_loss"):
-        # predict_fake => 1
+        # predict_fake => 1为了骗过判别器，生成图像争取以假乱真，尽量接近1
         # abs(targets - outputs) => 0
         gen_loss_GAN = tf.reduce_mean(-tf.log(predict_fake + EPS))
         gen_loss_L1 = tf.reduce_mean(tf.abs(targets - outputs))
@@ -634,7 +636,7 @@ def create_model(inputs, targets):
         discrim_train = discrim_optim.apply_gradients(discrim_grads_and_vars)
     #更新生成器的训练参数
     with tf.name_scope("generator_train"):
-        with tf.control_dependencies([discrim_train]):#先执行discrim_train，再执行下面
+        with tf.control_dependencies([discrim_train]):
             gen_tvars = [var for var in tf.trainable_variables() if var.name.startswith("generator")]
             gen_optim = tf.train.AdamOptimizer(a.lr, a.beta1)
             gen_grads_and_vars = gen_optim.compute_gradients(gen_loss, var_list=gen_tvars)
@@ -712,7 +714,6 @@ def main():
     a.progress_freq =1
     a.input_dir = "./merge_image"
     a.output_dir = "./ckt"#模型和event保存目录
-    a.max_epochs=200
     a.which_direction = "AtoB"
     a.checkpoint = './ckt'
     if a.seed is None:
@@ -758,9 +759,9 @@ def main():
 
         with tf.variable_scope("generator"):  #tf.name_scope() 主要是用来管理命名空间的，tf.variable_scope() 的作用是为了实现变量共享
             batch_output = deprocess(create_generator(preprocess(batch_input), 1))
-
+        #out_image.name = strided_slice:0, tf.image.convert_image_dtype返回的名称为trided_slice:0
         output_image = tf.image.convert_image_dtype(batch_output, dtype=tf.uint8)[0]
-
+        print(output_image.name)
         key = tf.placeholder(tf.string, shape=[1])
         inputs = {
             "key": key.name,
@@ -774,6 +775,7 @@ def main():
         tf.add_to_collection("outputs", json.dumps(outputs))
 
         init_op = tf.global_variables_initializer()
+        #tf.train.Saver给所有变量添加save和restore操作
         restore_saver = tf.train.Saver()
         export_saver = tf.train.Saver()
 
@@ -781,10 +783,15 @@ def main():
             sess.run(init_op)
             print("loading model from checkpoint")
             checkpoint = tf.train.latest_checkpoint(a.checkpoint)
+            #这个方法运行构造器为恢复变量所添加的操作。它需要启动图的Session。restore对变量不需要经过初始化，恢复作为初始化的一种方法。
             restore_saver.restore(sess, checkpoint)
             print("exporting model")
-            export_saver.export_meta_graph(filename=os.path.join(a.output_dir, "export.meta"))
-            export_saver.save(sess, os.path.join(a.output_dir, "export"), write_meta_graph=False)
+            #保存模型的方法:1.export_meta_grapth+saver.save(,False),分别保存图文件和参数文件;2.saver.save("",True)，同时保存图和参数文件
+            #export_saver.export_meta_graph(filename=os.path.join(a.output_dir, "export.meta"))
+            #运行通过构造器添加的操作。它需要启动图的session。save要求被保存的变量必须经过了初始化。
+
+            #export_saver.save(sess, os.path.join(a.output_dir, "export"), write_meta_graph=False)
+            restore_saver.save(sess, os.path.join(a.output_dir, "export"))
 
         return
     #训练开始，1加载数据集
@@ -843,8 +850,8 @@ def main():
             "outputs": tf.map_fn(tf.image.encode_png, converted_outputs, dtype=tf.string, name="output_pngs"),
         }
 
-    tf.summary.scalar("discriminator_loss", model.discrim_loss)
-    tf.summary.scalar("generator_loss_GAN", model.gen_loss_GAN)
+    # tf.summary.scalar("discriminator_loss", model.discrim_loss)
+    # tf.summary.scalar("generator_loss_GAN", model.gen_loss_GAN)
     tf.summary.scalar("generator_loss_L1", model.gen_loss_L1)
 
     for var in tf.trainable_variables():
@@ -861,7 +868,7 @@ def main():
     2、saver.save,根据给定了文件名和迭代次数，生成四个文件名：如文件名+"-"+迭代次数.meta
     存储网络结构.meta、存储训练好的参数.data和.index、记录最新的模型checkpoint。
     '''
-    #saver = tf.train.Saver(max_to_keep=1)
+    saver = tf.train.Saver(max_to_keep=1)
    
     logdir = a.output_dir if (a.trace_freq > 0 or a.summary_freq > 0) else None
     sv = tf.train.Supervisor(logdir=logdir, save_summaries_secs=0, saver=None)
@@ -874,7 +881,7 @@ def main():
         if a.checkpoint is not None:
             print("loading model from checkpoint")
             checkpoint = tf.train.latest_checkpoint(a.checkpoint)
-            #saver.restore(sess, checkpoint)
+            saver.restore(sess, checkpoint)
             if a.start_global_step > 0:
                 sess.run(tf.assign(sv.global_step, a.start_global_step))
         #设置最大迭代次数
@@ -961,6 +968,7 @@ def main():
                     train_step = (results["global_step"] - 1) % examples.steps_per_epoch + 1
                     rate = (step + 1) * a.batch_size / (time.time() - start)
                     remaining = (max_steps - step) * a.batch_size / rate
+                    print("step: %d"%step)
                     print("progress  epoch %d  step %d  image/sec %0.1f  remaining %d s" % (
                         train_epoch, train_step, rate, remaining / 60))
                     print("discrim_loss", results["discrim_loss"])
@@ -969,9 +977,9 @@ def main():
                 
                 
                 #每隔多少步保存一次模型,模型名称为"model"+"-"+global_step
-                # if should(a.save_freq):
-                #     print("saving model")
-                    #saver.save(sess, os.path.join(a.output_dir, "model"), global_step=sv.global_step)
+                if should(a.save_freq):
+                    print("saving model")
+                    saver.save(sess, os.path.join(a.output_dir, "model"), global_step=sv.global_step)
 
                 if sv.should_stop():
                     break
@@ -983,55 +991,57 @@ def get_mask(im, input_placeholder, output_tensor, sess, log=False):
     output_ = sess.run(fetchs, feed_dict)
     return output_
 
-
+#获取连通区域的外界矩形，以列表形式返回
 def get_cc(im_bin):
     connectivity = 8
-    output = cv2.connectedComponentsWithStats(im_bin, connectivity, cv2.CV_32S)
+    output = cv2.connectedComponentsWithStats(im_bin, connectivity,cv2.CV_32S)
     # The first cell is the number of labels
     num_labels = output[0]
     # The second cell is the label matrix
     labels = output[1]
     # The third cell is the stat matrix
+    #output[2]为shape为(n,5)的ndarray，5个值分别为x,y,width,height,width*height
     stats = output[2]
     # The fourth cell is the centroid matrix
     centroids = output[3]
     max_area_index = 0
     min_thresh = 15 * 15
     cc_list = []
+    #从下标1开始，0为图像的大小
     for i in range(1, len(stats)):
         if stats[i][4] > min_thresh:
-            cc_list.append(stats[i][:4])
+            cc_list.append(stats[i][:4])#list中存放着一维的ndarray
     return cc_list
 
 
 def sort_roi_lit(roi_list):
     # first sort by y
-    roi_list = sorted(roi_list, key=lambda x: x[1])
-    if len(roi_list) != 10:
-        return roi_list
+    #改为按面积排序，由大到小
+    roi_list = sorted(roi_list, key=lambda x: x[2]*x[3],reverse = True )
+    return roi_list[0]
 
     # then sort with x if distance of y is small and of x is big
-    def swap(alist, i, j):
-        tmp = alist[i]
-        alist[i] = alist[j]
-        alist[j] = tmp
-        return alist
-
-    if roi_list[0][0] > roi_list[1][0]:
-        roi_list = swap(roi_list, 0, 1)
-    if roi_list[4][0] > roi_list[5][0]:
-        roi_list = swap(roi_list, 4, 5)
-    if roi_list[8][0] > roi_list[9][0]:
-        roi_list = swap(roi_list, 8, 9)
-
-    # roi_list = np.array(roi_list)
-    # avg_height = np.average(roi_list, axis=1)[3]
-    # for i in range(len(roi_list)):
-    #     if i > 0 and abs(roi_list[i][1] - roi_list[i - 1][1]) < avg_height / 2 and roi_list[i][0] < roi_list[i - 1][0]:
-    #         tmp = roi_list[i]
-    #         roi_list[i] = roi_list[i - 1]
-    #         roi_list[i - 1] = tmp
-    return roi_list
+    # def swap(alist, i, j):
+    #     tmp = alist[i]
+    #     alist[i] = alist[j]
+    #     alist[j] = tmp
+    #     return alist
+    #
+    # if roi_list[0][0] > roi_list[1][0]:
+    #     roi_list = swap(roi_list, 0, 1)
+    # if roi_list[4][0] > roi_list[5][0]:
+    #     roi_list = swap(roi_list, 4, 5)
+    # if roi_list[8][0] > roi_list[9][0]:
+    #     roi_list = swap(roi_list, 8, 9)
+    #
+    # # roi_list = np.array(roi_list)
+    # # avg_height = np.average(roi_list, axis=1)[3]
+    # # for i in range(len(roi_list)):
+    # #     if i > 0 and abs(roi_list[i][1] - roi_list[i - 1][1]) < avg_height / 2 and roi_list[i][0] < roi_list[i - 1][0]:
+    # #         tmp = roi_list[i]
+    # #         roi_list[i] = roi_list[i - 1]
+    # #         roi_list[i - 1] = tmp
+    # return roi_list
 
 
 def get_roi_list(mask, log=False):
@@ -1044,7 +1054,7 @@ def get_roi_list(mask, log=False):
     return cc_list
 
 
-def use(image_path, out_dir=None, log=False):
+def use(image_path, out_dir=None, log=True):
     with open(os.path.join(a.checkpoint, "options.json")) as f:
         for key, val in json.loads(f.read()).items():
             print("loaded", key, "=", val)
@@ -1056,6 +1066,7 @@ def use(image_path, out_dir=None, log=False):
     original = cv2.imread(image_path)
 
     with tf.Session() as sess:
+        #加载模型数据
         print("loading graph")
         saver = tf.train.import_meta_graph(os.path.join(a.checkpoint, "export.meta"))
         print(sess.graph)
@@ -1064,9 +1075,9 @@ def use(image_path, out_dir=None, log=False):
         print("loading data")
         checkpoint = tf.train.latest_checkpoint(a.checkpoint)
         saver.restore(sess, checkpoint)
-
+        #获取mask图像
         input = sess.graph.get_tensor_by_name('Placeholder:0')
-        output = sess.graph.get_tensor_by_name('strided_slice:0')
+        output = sess.graph.get_tensor_by_name('strided_slice:0')#根据名称返回tensor
         width = original.shape[1]
         height = original.shape[0]
         im = cv2.resize(original, (256, 256))
@@ -1075,18 +1086,22 @@ def use(image_path, out_dir=None, log=False):
         if log:
             cv2.imshow('src', im)
             cv2.imshow('mask', mask)
-            cv2.waitKey(0)
+            #cv2.waitKey(0)
 
         roi_list = get_roi_list(mask)
         x_scale = 256 / width
         y_scale = 256 / height
+        #将坐标转到原图坐标系中
         roi_list = np.array(roi_list).reshape([-1, 2]) * np.array([1 / x_scale, 1 / y_scale], dtype=np.float32)
         roi_list = roi_list.reshape([-1, 4]).astype(np.int16)
         for i, roi in enumerate(roi_list):
-            roi_im = utils_image.get_roi(original, roi, 'box')
+            #在原图中截取银行卡矩形区域
+            roi_im,mask_im = utils_image.get_roi(original, roi, 'box')
             if log:
                 cv2.imshow('roi', roi_im)
+                cv2.imshow("mask",mask_im)
                 cv2.waitKey(0)
+
         return
 
 
@@ -1104,10 +1119,10 @@ def use_batch():
     #         print(i_path, 'does not exist, creating...')
     #         os.mkdir(i_path)
 
-    with open(os.path.join(a.checkpoint, "options.json")) as f:
-        for key, val in json.loads(f.read()).items():
-            print("loaded", key, "=", val)
-            setattr(a, key, val)
+    # with open(os.path.join(a.checkpoint, "options.json")) as f:
+    #     for key, val in json.loads(f.read()).items():
+    #         print("loaded", key, "=", val)
+    #         setattr(a, key, val)
 
     for k, v in a._get_kwargs():
         print(k, "=", v)
@@ -1143,7 +1158,9 @@ def use_batch():
             width = original.shape[1]
             height = original.shape[0]
             im = cv2.resize(original, (256, 256))
-            mask = get_mask(im, input, output, sess, True)
+            mask = get_mask(im, input, output, sess, False)
+            name = os.path.basename(image_path)
+            cv2.imwrite(os.path.join('.\\test_res',name),mask)
             # mask = cv2.resize(mask, (width, height))
             if log:
                 cv2.imshow('src', im)
@@ -1155,18 +1172,28 @@ def use_batch():
             y_scale = 256 / height
             roi_list = np.array(roi_list).reshape([-1, 2]) * np.array([1 / x_scale, 1 / y_scale], dtype=np.float32)
             roi_list = roi_list.reshape([-1, 4]).astype(np.int16)
-            if len(roi_list) != 10:
-                continue
+            if len(roi_list) == 0:
+                 print("none",image_path)
+                 name = os.path.basename(image_path)
+                 cv2.imwrite(os.path.join(a.output_dir,name))
+                 continue
+
+
             for i, roi in enumerate(roi_list):
-                roi_im = utils_image.get_roi(original, roi, 'box')
+                roi_im,mask_im = utils_image.get_roi(original, roi, 'box')
                 if log:
                     cv2.imshow('roi', roi_im)
                     cv2.waitKey(0)
 
                 if a.output_dir:
                     i_dir = os.path.join(a.output_dir, '{:0>2}'.format(i))
+                    mask_dir =os.path.join(a.output_dir,"mask")
+                    if not os.path.exists(mask_dir):
+                        os.makedirs(mask_dir)
                     name = os.path.basename(image_path)
                     i_path = os.path.join(i_dir, name)
+                    mask_path = os.path.join(mask_dir,name)
+                    cv2.imwrite(mask_path,mask_im)
                     if os.path.exists(i_dir):
                         cv2.imwrite(i_path, roi_im)
                     else:
@@ -1175,12 +1202,21 @@ def use_batch():
                         cv2.imwrite(i_path, roi_im)
 
 if __name__ == "__main__":
-    # if a.mode == 'use':
-    #     use(a.image_path)
-    # elif a.mode == 'use_batch':
-    #     use_batch()
-    # else:
-    #     main()
-    main()
+    if a.mode == 'use': #单张图像测试
+        #use(a.image_path)
+        #use(r"E:\project\pix2pix_idcard\pix2pix_copyto_gali\pix2pix_text\test\src_image\630769138_350_rotate.jpg")
+        #use(r"E:\project\pix2pix_idcard\pix2pix_copyto_gali\pix2pix_text\test\src_image\630883904_350_rotate.jpg")
+        #use(r"E:\project\pix2pix_idcard\pix2pix_copyto_gali\pix2pix_text\test\src_image\631314973_10_rotate.jpg")
+        #use(r"E:\project\pix2pix_idcard\pix2pix_copyto_gali\pix2pix_text\test\src_image\631100712_270_rotate.jpg")
+        #use(r"E:\project\pix2pix_idcard\pix2pix_copyto_gali\pix2pix_text\test\src_image\631062964_350_rotate.jpg")
+        #use(r"E:\project\pix2pix_idcard\pix2pix_copyto_gali\pix2pix_text\test\src_image\631054112_350_rotate.jpg")
+        use(r"E:\project\pix2pix_idcard\pix2pix_copyto_gali\pix2pix_text\test\src_image\631062964_350_rotate.jpg")
+        use(r"E:\project\pix2pix_idcard\pix2pix_copyto_gali\pix2pix_text\test\src_image\630894943_10_rotate.jpg")
+    elif a.mode == 'use_batch':#批量测试图像
+        a.output_dir = "./use_batch"
+        a.image_list = r"E:\project\pix2pix_idcard\pix2pix_copyto_gali\pix2pix_text\error_name\error_name/imglist_file.txt"
+        use_batch()
+    else:
+        main()
 
 
