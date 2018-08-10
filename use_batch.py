@@ -40,11 +40,11 @@ def get_roi_list(mask, log=False):
     return cc_list
 
 if __name__ =="__main__":
-    input_dir = r"E:\project\idcard_frontal_target_location\data\idcard-frontal-2346\idcard-frontal-2346"
-    graph_path = r".\ckt\export.meta"
+    input_dir = r".\data\test_data\error_name\error_name"
+    graph_path = r".\gen_version\data\export.meta"
     saver = tf.train.import_meta_graph(graph_path)
     with tf.Session() as sess:
-        saver.restore(sess, r"./ckt/export")
+        saver.restore(sess,r"E:\project\pix2pix_idcard\pix2pix_copyto_gali\pix2pix_text\gen_version\data\export")
         input = sess.graph.get_tensor_by_name('Placeholder:0')
         output = sess.graph.get_tensor_by_name('strided_slice:0')
         if not os.path.exists(input_dir):
@@ -58,19 +58,36 @@ if __name__ =="__main__":
             raise Exception("cannot find image file")
 
         for file_path in image_list:
-            # base_dir = r"E:\project\idcard_frontal_target_location\data\idcard-frontal-2346\idcard-frontal-2346"
-            # file_name = os.path.basename(file_path)
+            # base_dir = r".\data\test_data\error_name\error_name"
+            file_name = os.path.basename(file_path)
             # src = cv2.imread(os.path.join(base_dir,file_name), 1)
             src = cv2.imread(file_path, 1)
             if not isinstance(src,np.ndarray):
                 continue
             if src.ndim == 3 and src.shape[2] ==3:
-                src = cv2.resize(src,dsize=(256,256))
-                bin_image = sess.run(output, feed_dict={input: src})
+                #计算缩放比例
+                x_scale = 256 / src.shape[1]
+                y_scale = 256 / src.shape[0]
+
+                src_normal = cv2.resize(src,dsize=(256,256))
+                #获取测试结果
+                bin_image = sess.run(output, feed_dict={input: src_normal})
+                #获取面积最大的blob的外界矩形，并对输出缩放到原始比例
                 x,y,width,height = get_roi_list(bin_image)
+                x = int(x/x_scale)
+                width = int(width/x_scale)
+                y = int(y/y_scale)
+                height = int(height/y_scale)
                 crop = src[y:y+height,x:x+width]
-                cv2.imshow("src",src)
-                cv2.imshow("bin", bin_image)
-                cv2.imshow("crop",crop)
-                cv2.waitKey(0)
+
+                #cv2.imshow(os.path.join("src:",file_name),src)
+                #cv2.imshow("bin", bin_image)
+                # temp = os.path.join(r"E:\project\pix2pix_idcard\pix2pix_copyto_gali\pix2pix_text\data\test_data\00\big",file_name)
+                # tt = cv2.imread(temp)
+                # cv2.imshow("1",tt)
+                #cv2.imshow("dest",crop)
+                temp= r"E:\project\pix2pix_idcard\pix2pix_copyto_gali\pix2pix_text\data\test_data\error_name\error_name\images"
+                cv2.imwrite(os.path.join(temp,file_name),crop)
+                #cv2.waitKey(0)
+                #cv2.destroyAllWindows()
         print("test finished")
